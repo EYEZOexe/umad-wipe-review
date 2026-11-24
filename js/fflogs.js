@@ -45,7 +45,12 @@ export async function finishPkceLogin() {
   if (!saved || saved.state !== q.get('state')) throw new Error('FFLogs login state mismatch; try logging in again.');
   const body = new URLSearchParams({ grant_type: 'authorization_code', client_id: saved.clientId, code_verifier: saved.verifier, redirect_uri: saved.redirect, code });
   const res = await fetch(`${BASE}/oauth/token`, { method: 'POST', body });
-  if (!res.ok) throw new Error(`FFLogs login failed (HTTP ${res.status}).`);
+  if (!res.ok) {
+    // FFLogs explains the refusal in the body (e.g. invalid_client, redirect URI mismatch): show it.
+    let why = '';
+    try { const j = await res.json(); why = [j.error, j.error_description || j.message, j.hint].filter(Boolean).join(': '); } catch {}
+    throw new Error(`FFLogs login failed (HTTP ${res.status})${why ? `: ${why}` : ''}. Redirect URL sent: ${saved.redirect}`);
+  }
   const t = await res.json();
   setAuth({ mode: 'user', clientId: saved.clientId, token: t.access_token, expires: Date.now() + t.expires_in * 1000 });
   return true;
