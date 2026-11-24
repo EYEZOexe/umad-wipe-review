@@ -3,7 +3,7 @@
 export const CONFIG = {
   // FFLogs *public* client ID (https://www.fflogs.com/api/clients/, "public client", redirect URL = this page's URL).
   // When set, people just click "Log in with FFLogs": no client ID or secret to type in.
-  fflogsClientId: '01a20e72-f2c0-7140-9815-4bc0651a5dff',
+  fflogsClientId: '01a20e79-fe83-7234-8fb9-a1f77b98767d',
 
   // Supabase project for the shared death tally (Project Settings -> API / Data API):
   // the project URL (https://xxxx.supabase.co) and the PUBLISHABLE key (sb_publishable_...) or legacy "anon" key.
