@@ -59,6 +59,10 @@ report updates its log facts and keeps your callouts and edits. Demo data is nev
   - `Alistar died due to Ryujin no feint` → Alistar's death, counted against Ryujin ("due to", "because of", "caused by").
   - `Arrows too far apart` (no player name first) → a party note, counted against nobody.
 
+  **Your names for mechanics** (under the callouts box) teach the matcher your static's words: `statue, gaze = flagrant fire iii, mystery magic`
+  means a callout saying "statue" fits a death whose logged ability, sheet mechanic or phase contains those words. "8th tower" always means the
+  sheet's Towers VIII. Lines like "Deaths:" are skipped. Each matched name has a drop-down of that player's deaths to pick the right one.
+
   Names match on first or last name, a 4+ letter prefix ("Reimui" → Reimu) or one typo. Each line takes that player's
   first unclaimed death in the same pull as the line before or later, preferring one (of their next 3) whose logged
   mechanic contains a word from the line. Matches by order alone are flagged "order only". Re-matching replaces earlier

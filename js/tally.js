@@ -80,18 +80,50 @@ export function parseCallout(line, isName) {
   return { text, victims, blame, keywords };
 }
 
-const score = (d, kw) => {
-  const hay = `${d.mechanic} ${d.ability || ''} ${d.nearMechanic || ''}`.toLowerCase();
-  return kw.filter(k => hay.includes(k) || (k.length >= 5 && hay.includes(k.slice(0, -1)))).length;
+/**
+ * Your static's names for mechanics, one per line: "statue, gaze = Flagrant Fire III, Mystery Magic". Left of "=" are
+ * words used in callouts, right of "=" are words in the logged ability, sheet mechanic or phase name.
+ * Returns [[nickname, [targets]]], all lower case.
+ */
+export function parseNicknames(text) {
+  const out = [];
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const m = line.match(/^([^=#]+)=(.+)$/);
+    if (!m) continue;
+    const targets = m[2].split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    m[1].split(',').map(s => s.trim().toLowerCase()).filter(Boolean).forEach(n => out.push([n, targets]));
+  }
+  return out;
+}
+
+/** Words to look for in a death's mechanic: the callout's own words plus what its nicknames stand for. */
+const termsFor = (c, nicknames) => {
+  const lower = ` ${c.text.toLowerCase().replace(/[^a-z']+/g, ' ')} `;
+  const extra = nicknames.filter(([n]) => lower.includes(` ${n} `)).flatMap(([, t]) => t);
+  return [...new Set([...c.keywords, ...extra])];
 };
+
+const hayOf = d => `${d.mechanic} ${d.ability || ''} ${d.nearMechanic || ''} ${d.phaseName || ''}`.toLowerCase();
+const score = (d, terms) => {
+  const hay = hayOf(d);
+  return terms.filter(k => hay.includes(k) || (k.length >= 5 && hay.includes(k.slice(0, -1)))).length;
+};
+
+/** "8th tower" → the sheet's "Towers VIII": a numbered tower in a callout pins the exact set of towers. */
+const ROMAN = ['', 'i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x'];
+const towerNumber = text => { const m = text.toLowerCase().match(/\b(\d{1,2})(?:st|nd|rd|th)\s+towers?\b/); return m && ROMAN[+m[1]] ? new RegExp(`towers ${ROMAN[+m[1]]}(?![a-z])`) : null; };
+
+/** "Deaths:" and similar heading lines aren't callouts. */
+const isHeading = line => /:\s*$/.test(line) && line.split(/\s+/).length <= 3;
 
 /**
  * Match callout lines, in the order they were written (the order of the night), to logged deaths.
- * Each callout takes the earliest unclaimed death of that player in the same pull as the previous callout or
- * later, preferring one whose mechanic contains a word from the callout. If nothing is left after that point,
- * the earliest unclaimed death of that player anywhere is used. Returns one row per line.
+ * Each callout takes that player's first unclaimed death in the same pull as the previous callout or later whose
+ * mechanic fits the callout (its words, or what its nicknames stand for). With no fitting death it takes their
+ * first unclaimed death from that point ("order only"). If nothing is left after that point, the earliest
+ * unclaimed death of that player anywhere is used. Returns one row per line.
  */
-export function matchCallouts(text, deaths, names) {
+export function matchCallouts(text, deaths, names, nicknames = []) {
   const isName = nameMatcher(names);
   const list = [...deaths].sort((a, b) => a.abs - b.abs);
   const pullOrder = [...new Set(list.map(d => `${d.report}:${d.fight}`))];
@@ -100,14 +132,21 @@ export function matchCallouts(text, deaths, names) {
   let at = 0;
   const rows = [];
   for (const line of text.split(/\r?\n/).map(s => s.trim()).filter(Boolean)) {
+    if (isHeading(line)) continue;
     const c = parseCallout(line, isName);
+    const terms = termsFor(c, nicknames);
+    const tower = towerNumber(c.text);
     const matched = [];
     for (const v of c.victims) {
       const mine = list.filter(d => d.player === v && !taken.has(d.key));
       const ahead = mine.filter(d => order(d) >= at);
       const pool = ahead.length ? ahead : mine;
-      // Prefer the first death (within the next 3 of theirs) whose mechanic fits the callout's words.
-      const fit = c.keywords.length ? pool.slice(0, 3).find(d => score(d, c.keywords) > 0) : null;
+      // "Calerie + Arune died to statue": the second name goes to the same pull as the first when they died there.
+      const first = matched.find(x => x.death)?.death;
+      const samePull = first ? pool.filter(d => d.report === first.report && d.fight === first.fight) : [];
+      const fit = (tower && pool.find(d => tower.test(hayOf(d))))
+        || (first && (samePull.find(d => score(d, terms) > 0) || samePull[0]))
+        || (terms.length ? pool.find(d => score(d, terms) > 0) : null);
       const pick = fit || pool[0];
       if (!pick) { matched.push({ victim: v, death: null }); continue; }
       taken.add(pick.key);
@@ -115,16 +154,19 @@ export function matchCallouts(text, deaths, names) {
     }
     const found = matched.filter(m => m.death);
     if (found.length) at = Math.max(at, ...found.map(m => order(m.death)));
-    rows.push({ ...c, matched });
+    rows.push({ ...c, terms, matched });
   }
   return rows;
 }
+
+/** A death with its callout taken off: back to what the log analysis says. */
+export const clearCallout = e => ({ ...e, note: '', blame: e.player, mech: !e.wipeOut && AUTO_MECH.has(e.category), src: 'auto' });
 
 /** Write matched callouts into the ledger: note, blame and "mechanical". Earlier callouts on these reports are cleared first. */
 export function applyCallouts(ledger, rows, reports) {
   const out = { ...ledger };
   for (const [k, e] of Object.entries(out)) if (reports.includes(e.report) && e.src === 'callout') {
-    out[k] = { ...e, note: '', blame: e.player, mech: !e.wipeOut && AUTO_MECH.has(e.category), src: 'auto' };
+    out[k] = clearCallout(e);
   }
   for (const r of rows) for (const m of r.matched) if (m.death) {
     out[m.death.key] = { ...out[m.death.key], note: r.text, blame: r.blame || m.victim, mech: true, src: 'callout' };

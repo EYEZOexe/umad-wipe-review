@@ -205,3 +205,4 @@ form.discord h3 { margin: 16px 0 4px; font-size: 14px; }
 .ghost-file .btn-like { display: inline-block; border: 1px solid var(--border); border-radius: 6px; padding: 7px 14px; cursor: pointer; color: var(--text-primary); }
 .ghost-file .btn-like:hover, button.ghost:hover { background: var(--surface-2); }
 tr.muted td { color: var(--text-muted); }
+select.pick { max-width: 100%; font-size: 12px; padding: 3px 6px; margin: 1px 0; }

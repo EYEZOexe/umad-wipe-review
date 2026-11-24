@@ -6,7 +6,7 @@ import { buildDemo } from './demo.js';
 import { JOB_ABBR, CATALOG, checkCatalog, PARTY_MIT_BY_JOB } from './mits.js';
 import { JOB_GUIDE, JOB_GUIDE_PATCH } from './jobguide.js';
 import { teamRecap, playerNotes } from './discord.js';
-import { mergeDeaths, matchCallouts, applyCallouts, periods, tally, counts } from './tally.js';
+import { mergeDeaths, matchCallouts, applyCallouts, clearCallout, parseNicknames, periods, tally, counts } from './tally.js';
 import { CONFIG } from './config.js';
 import * as cloud from './cloud.js';
 
@@ -33,6 +33,13 @@ let view = { tab: 'summary', player: '', phase: '', tallyKind: 'week', tallyMode
 let ledger = cloud.cloudOn() ? {} : store.get('ledger', {});
 let demoLedger = {};           // demo pulls never go into the saved ledger
 let calloutRows = null;        // last "Match to deaths" result, for the table under the callouts box
+// The static's own names for mechanics, used to match callouts ("statue" is Flagrant Fire III). Editable on the tab.
+const DEFAULT_NICKNAMES = `forsaken = forsaken, towers, spelldriver, spellwave
+towers, tower = towers, spelldriver, spellwave, past's end, future's end
+lazer, laser, beams, beam = the river of light
+statue, gaze = flagrant fire iii, mystery magic
+puddle, cleave = past's end, future's end, tsunami
+arrows, arrow = revolting ruin iii`;
 // `synced` holds what the server has for each key, so only changed deaths are sent.
 let synced = {};
 let cloudState = cloud.cloudOn() ? 'checking' : 'off'; // off | checking | ready | denied | error
@@ -772,11 +779,13 @@ const TABS = {
     const reports = new Set(all.map(e => e.report));
     const pullN = new Map(R.pulls.map(p => [`${p.reportCode}:${p.id}`, p.n]));
     const deathTxt = e => `#${pullN.get(`${e.report}:${e.fight}`) ?? '?'} · ${esc(phaseShort(e.phaseName))} ${fmt(e.pullT)} into pull · <b>${esc(e.player)}</b> — ${esc(e.mechanic)} <span class="muted">(${esc(e.category)})</span>`;
+    const deathOpt = e => `#${pullN.get(`${e.report}:${e.fight}`) ?? '?'} · ${phaseShort(e.phaseName)} ${fmt(e.pullT)} · ${e.ability || e.mechanic}${e.wipeOut ? ' (wipe-out)' : ''}`;
     const callouts = calloutRows ? `<table><thead><tr><th>Callout</th><th>Matched to (log)</th><th>Counted against</th></tr></thead><tbody>
-      ${calloutRows.map(r => `<tr><td>${esc(r.text)}</td>
+      ${calloutRows.map((r, ri) => `<tr><td>${esc(r.text)}</td>
         <td class="small">${!r.victims.length ? '<span class="muted">Doesn\'t start with a name from these pulls: kept as a party note, not counted against anyone.</span>'
-          : r.matched.map(m => m.death ? `${deathTxt(m.death)}${r.keywords.length && !m.fit ? ' <span class="warn" data-tip="No word from the callout appears in the logged mechanic: matched by order only. Check it below.">order only</span>' : ''}`
-            : `<span class="warn">No death of ${esc(m.victim)} left in these pulls.</span>`).join('<br>')}</td>
+          : r.matched.map((m, vi) => `<select class="pick" data-pick="${ri}:${vi}">${m.death ? '' : '<option value="" selected>— none —</option>'}
+              ${here.filter(e => e.player === m.victim).map(e => `<option value="${esc(e.key)}" ${m.death?.key === e.key ? 'selected' : ''}>${esc(deathOpt(e))}</option>`).join('')}</select>
+            ${m.manual ? '<span class="muted">picked</span>' : m.death && !m.fit ? ' <span class="warn" data-tip="Nothing in the callout (or its nicknames) matches a logged mechanic: matched by order only. Pick the right death.">order only</span>' : ''}`).join('<br>')}</td>
         <td>${r.victims.length ? esc(r.blame || r.victims.join(', ')) : '<span class="muted">—</span>'}</td></tr>`).join('')}</tbody></table>` : '';
     const online = cloud.cloudOn() && !R.demo;
     const pending = online ? unsynced().length : 0;
@@ -787,6 +796,9 @@ const TABS = {
       Each line is matched to that player's next logged death (same pull as the line before, or later), preferring one whose mechanic contains a word from the line.
       A matched death counts as a mechanical death against the player who died, or against the name after "due to" / "because of". Lines that don't start with a player name are party notes. Fix any match in the list below.</p>
       <textarea id="callouts" rows="6" placeholder="Arune - Forsaken - Stack not there">${esc(store.get('callouts', ''))}</textarea>
+      <details class="sub"><summary class="small"><b>Your names for mechanics</b> <span class="muted">(nickname = words in the logged ability, sheet mechanic or phase)</span></summary>
+        <p class="muted small">One per line. Left of "=": words your callouts use, comma-separated. Right: words that appear in the log for that mechanic. "8th tower" always means the sheet's Towers VIII.</p>
+        <textarea id="nicknames" rows="6">${esc(store.get('nicknames', DEFAULT_NICKNAMES))}</textarea></details>
       <div class="row"><button id="btn-callouts" class="primary">Match to deaths</button><span class="muted small">Re-matching replaces the earlier callouts for these reports.</span></div>
       ${callouts}
     </section>` : ''}
@@ -1164,9 +1176,20 @@ function bindTally() {
     if (!demo) store.set('callouts', text);
     const codes = loaded.map(e => e.report.code);
     const here = Object.values(getL()).filter(e => codes.includes(e.report));
-    calloutRows = matchCallouts(text, here, fullResult.players.map(p => p.name));
+    store.set('nicknames', $('#nicknames').value);
+    calloutRows = matchCallouts(text, here, fullResult.players.map(p => p.name), parseNicknames($('#nicknames').value));
     setL(applyCallouts(getL(), calloutRows, codes));
     render();
+  });
+  // Pick a different death for one name of one callout: the old death loses the callout, the new one gets it.
+  document.querySelectorAll('[data-pick]').forEach(sel => sel.onchange = () => {
+    const [ri, vi] = sel.dataset.pick.split(':').map(Number);
+    const r = calloutRows[ri], m = r.matched[vi], L = { ...getL() };
+    if (m.death && L[m.death.key]?.src === 'callout') L[m.death.key] = clearCallout(L[m.death.key]);
+    const e = L[sel.value];
+    if (e) L[e.key] = { ...e, note: r.text, blame: r.blame || m.victim, mech: true, src: 'callout' };
+    r.matched[vi] = { victim: m.victim, death: e || null, fit: true, manual: true };
+    setL(L); render();
   });
   const edit = (key, change) => { const L = getL(); if (!L[key]) return; setL({ ...L, [key]: { ...L[key], ...change, src: 'edit' } }); render(); };
   document.querySelectorAll('[data-note]').forEach(i => i.onchange = () => edit(i.dataset.note, { note: i.value.trim() }));
