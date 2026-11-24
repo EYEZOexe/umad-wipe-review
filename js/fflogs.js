@@ -56,6 +56,12 @@ export async function finishPkceLogin() {
   return true;
 }
 
+/** The logged-in FFLogs user's token (PKCE login only; a client ID + secret doesn't identify a person), or null. */
+export function userToken() {
+  const a = getAuth();
+  return a.mode === 'user' && a.token && a.expires > Date.now() ? a.token : null;
+}
+
 export function isConfigured() {
   const a = getAuth();
   return (a.mode === 'client' && a.clientId && a.clientSecret) || (a.mode === 'user' && a.token && a.expires > Date.now());

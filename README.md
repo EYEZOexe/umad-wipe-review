@@ -69,24 +69,27 @@ report updates its log facts and keeps your callouts and edits. Demo data is nev
 - **Deaths in these pulls**: edit each death's callout, who it counts against (or nobody), and the mechanical tick.
 - **Export / Import** the tally as JSON to move it to another browser or merge another officer's copy.
 
-### Shared online tally (Supabase, free)
+### Private online tally (Supabase, free)
 
-With Supabase set up, the tally is stored online instead of in one browser. Everyone who opens the page sees it, even
-before analyzing anything. Saving changes needs the static's passcode, entered once per browser. Without it the page is
-view-only, and deaths from your own analysis wait until someone unlocks editing.
+With Supabase set up, the tally is stored online and is **private to one FFLogs account** (the owner). For anyone else,
+including people logged in with their own FFLogs account, the Death tally tab doesn't exist and the page never receives
+any tally data.
+
+How it's enforced: the table can't be read or written with the public key. Every tally call goes through a database
+function that receives the viewer's FFLogs login token, asks FFLogs who it belongs to (`api/v2/user`, `currentUser`)
+and only answers for the owner's FFLogs user ID. The header shows the logged-in FFLogs name and ID.
 
 1. Create a free project at https://supabase.com.
-2. Open **SQL Editor → New query**. Paste `supabase/setup.sql`, replace `CHANGE-ME` at the bottom with your passcode,
-   then click **Run**.
+2. Open **SQL Editor → New query**, paste `supabase/setup.sql` and click **Run** (safe to run again).
 3. Under **Project Settings → API keys**, copy the project URL and the **publishable** key (`sb_publishable_…`, or the
    legacy `anon` key). Put them in `js/config.js` as `supabaseUrl` and `supabaseKey`.
+4. Log in with FFLogs on the site. The header shows `FFLogs: logged in as NAME (#ID)`. In the SQL Editor, run
+   `insert into public.tally_owner (fflogs_user_id) values (ID) on conflict do nothing;` and reload the page.
 
-The publishable key is meant to be public. Reads are open to anyone. Writes only work through the `tally_upsert` and
-`tally_clear` functions, which check the passcode against a bcrypt hash that the public key can't read. Never put the
-`service_role` / secret key in `js/config.js`. To change the passcode, re-run the last statement of `setup.sql`.
+Only the FFLogs login button (a public client) identifies a person; a client ID + secret in Settings doesn't, so the
+tally stays hidden in that mode. Never put the `service_role` / secret key in `js/config.js`.
 
 Free Supabase projects pause after about a week with no requests. Restore the project from the dashboard if that happens.
-Any death already in this browser's local tally is uploaded the first time editing is unlocked.
 
 ### No FFLogs details for the static
 
@@ -349,7 +352,7 @@ number. Then open the page: the "Data checks" panel flags any catalog duration t
 - `js/analyze.js`: mechanic matching, mit and carry-over checks, death recaps, totals
 - `js/app.js`: the page
 - `js/tally.js`: death ledger, callout matching, weekly / monthly tally
-- `js/cloud.js`: shared tally in Supabase (REST, no library); `supabase/setup.sql`: its table, functions and passcode
+- `js/cloud.js`: shared tally in Supabase (REST, no library); `supabase/setup.sql`: its table and the FFLogs-owner check
 - `js/config.js`: public site settings (FFLogs public client ID, Supabase URL + publishable key)
 - `js/demo.js`: made-up demo data
 - `tools/`: the official-data extractor

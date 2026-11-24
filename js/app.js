@@ -28,14 +28,17 @@ let mapping = null;       // shared sheet-to-log mapping (learnMapping)
 let rosterByName = store.get('roster', {}); // slot -> player name
 let view = { tab: 'summary', player: '', phase: '', tallyKind: 'week', tallyMode: 'mech' };
 // Every death from every analyzed report, kept across nights for the weekly / monthly tally (js/tally.js).
-let ledger = store.get('ledger', {});
+// With Supabase set up (js/config.js) the tally lives online and only the owner's FFLogs account can see or change it:
+// the database checks the FFLogs login token on every call (supabase/setup.sql). Without Supabase it stays in this browser.
+let ledger = cloud.cloudOn() ? {} : store.get('ledger', {});
 let demoLedger = {};           // demo pulls never go into the saved ledger
 let calloutRows = null;        // last "Match to deaths" result, for the table under the callouts box
-// With Supabase set up (js/config.js) the tally is shared online: everyone reads it, the passcode unlocks saving.
 // `synced` holds what the server has for each key, so only changed deaths are sent.
 let synced = {};
-let cloudState = cloud.cloudOn() ? 'loading' : 'off'; // off | loading | ready | error
-let passcode = store.get('tallyCode', '');
+let cloudState = cloud.cloudOn() ? 'checking' : 'off'; // off | checking | ready | denied | error
+let me = null;                 // { id, name, owner } of the logged-in FFLogs account, from the database's check
+/** May this viewer see the death tally at all? Online: only the owner's FFLogs account. */
+const tallyAllowed = () => !cloud.cloudOn() || cloudState === 'ready';
 const unsynced = () => Object.values(ledger).filter(e => synced[e.key] !== JSON.stringify(e));
 let saving = Promise.resolve();
 function saveLedger() {
@@ -43,31 +46,36 @@ function saveLedger() {
     try { store.set('ledger', ledger); } catch (e) { status(`Couldn't save the death tally: ${e.message}`, true); }
     return;
   }
-  if (cloudState !== 'ready' || !passcode) return; // shown as "not saved online yet" on the tab
+  const token = ff.userToken();
+  if (cloudState !== 'ready' || !token) return;
   saving = saving.then(async () => {
     const todo = unsynced();
     if (!todo.length) return;
     try {
-      await cloud.saveEntries(passcode, todo);
+      await cloud.saveEntries(token, todo);
       todo.forEach(e => { synced[e.key] = JSON.stringify(e); });
-      localStorage.removeItem(LS + 'ledger'); // the browser-only tally from before is online now
       status(`Saved ${todo.length} death${todo.length === 1 ? '' : 's'} to the online tally.`);
-    } catch (e) {
-      if (/passcode/i.test(e.message)) { passcode = ''; store.set('tallyCode', ''); }
-      status(e.message, true);
-    }
+    } catch (e) { status(e.message, true); }
     if (view.tab === 'tally' && fullResult) render();
   });
 }
-async function loadCloudTally() {
+/** Ask the database who this FFLogs login is; load the tally only for the owner. Everyone else never sees it. */
+async function initCloud() {
+  const token = ff.userToken();
+  if (!token) { cloudState = 'denied'; me = null; renderConn(); render(); return; }
+  cloudState = 'checking';
   try {
-    const remote = await cloud.loadTally();
-    synced = Object.fromEntries(Object.entries(remote).map(([k, e]) => [k, JSON.stringify(e)]));
-    // Deaths analyzed before the download finished (or a browser-only tally from before) are kept; the server wins on the same death.
-    ledger = { ...ledger, ...remote };
-    cloudState = 'ready';
-    saveLedger();
-  } catch (e) { cloudState = 'error'; status(e.message, true); }
+    me = await cloud.whoami(token);
+    if (me?.owner) {
+      const remote = await cloud.loadTally(token);
+      synced = Object.fromEntries(Object.entries(remote).map(([k, e]) => [k, JSON.stringify(e)]));
+      // Deaths analyzed before the download finished are kept; the server wins on the same death.
+      ledger = { ...ledger, ...remote };
+      cloudState = 'ready';
+      saveLedger();
+    } else cloudState = 'denied';
+  } catch (e) { cloudState = 'error'; console.warn('Death tally:', e.message); }
+  renderConn();
   render();
 }
 
@@ -95,7 +103,9 @@ async function getPlan() {
 function renderConn() {
   const ok = ff.isConfigured();
   const a = ff.getAuth();
-  $('#conn').textContent = ok ? (a.mode === 'user' ? 'FFLogs: logged in' : 'FFLogs: connected') : 'FFLogs: not connected';
+  // Logged-in FFLogs name and user ID (from the tally check), so the owner can find their ID for supabase/setup.sql.
+  const who = me?.name ? ` as ${me.name} (#${me.id})` : '';
+  $('#conn').textContent = ok ? (a.mode === 'user' ? `FFLogs: logged in${who}` : 'FFLogs: connected') : 'FFLogs: not connected';
   $('#conn').classList.toggle('ok', !!ok);
   // Shared page with a public FFLogs client in js/config.js: one button, nothing to type.
   $('#btn-login').classList.toggle('hidden', !!ok || !CONFIG.fflogsClientId);
@@ -118,7 +128,11 @@ $('#btn-cc').onclick = async () => {
   catch (e) { alert(e.message); }
 };
 $('#btn-pkce').onclick = () => { const id = $('#pkce-id').value.trim(); if (!id) return; store.set('pkceId', id); ff.startPkceLogin(id); };
-$('#btn-signout').onclick = () => { localStorage.removeItem(LS + 'auth'); renderConn(); };
+$('#btn-signout').onclick = () => {
+  localStorage.removeItem(LS + 'auth');
+  if (cloud.cloudOn()) { me = null; cloudState = 'denied'; ledger = {}; synced = {}; calloutRows = null; }
+  renderConn(); render();
+};
 $('#btn-clear-cache').onclick = async () => { await ff.clearCache(); $('#btn-clear-cache').textContent = 'Cleared ✓'; };
 $('#settings').addEventListener('close', () => {
   const id = $('#sheet-id').value.trim();
@@ -328,7 +342,7 @@ function run() {
       // Keep the full result; render() derives the phase view from it.
       fullResult = result; phaseCache = {};
       if (isDemo) demoLedger = mergeDeaths({}, fullResult.pulls);
-      else { ledger = mergeDeaths(ledger, fullResult.pulls); saveLedger(); }
+      else if (tallyAllowed()) { ledger = mergeDeaths(ledger, fullResult.pulls); saveLedger(); }
       calloutRows = null;
       if (loaded.length) renderRoster();
       render();
@@ -390,11 +404,15 @@ function viewFor(k) {
 function render() {
   if (!fullResult) {
     // Nothing analyzed yet: with an online tally, show it straight away so the static can read it without FFLogs.
-    if (cloud.cloudOn()) { $('#results').innerHTML = `<div id="tab-body">${TABS.tally()}</div>`; bindTally(); }
+    // Nothing analyzed yet: the owner sees their tally straight away; everyone else sees nothing here.
+    $('#results').innerHTML = cloud.cloudOn() && tallyAllowed() ? `<div id="tab-body">${TABS.tally()}</div>` : '';
+    if (cloud.cloudOn() && tallyAllowed()) bindTally();
     return;
   }
+  if (view.tab === 'tally' && !tallyAllowed()) view.tab = 'summary';
   result = viewResult();
-  const tabs = [['summary', 'Summary'], ['mechanics', 'Mechanics'], ['carry', 'Carry-overs'], ['mits', 'Mit plan'], ['deaths', 'Deaths'], ['pulls', 'Pulls'], ['tally', 'Death tally'], ['reference', 'Reference clears'], ['method', 'How it works & sources']];
+  const tabs = [['summary', 'Summary'], ['mechanics', 'Mechanics'], ['carry', 'Carry-overs'], ['mits', 'Mit plan'], ['deaths', 'Deaths'], ['pulls', 'Pulls'], ['tally', 'Death tally'], ['reference', 'Reference clears'], ['method', 'How it works & sources']]
+    .filter(([id]) => id !== 'tally' || tallyAllowed());
   $('#results').innerHTML = `
     ${result.demo ? '<p class="banner">Demo data: made-up players and pulls built from the real mit sheet.</p>' : ''}
     <nav class="tabs" role="tablist">${tabs.map(([id, label]) => `<button role="tab" class="tab ${view.tab === id ? 'on' : ''}" data-tab="${id}">${label}</button>`).join('')}
@@ -761,24 +779,15 @@ const TABS = {
             : `<span class="warn">No death of ${esc(m.victim)} left in these pulls.</span>`).join('<br>')}</td>
         <td>${r.victims.length ? esc(r.blame || r.victims.join(', ')) : '<span class="muted">—</span>'}</td></tr>`).join('')}</tbody></table>` : '';
     const online = cloud.cloudOn() && !R.demo;
-    const locked = online && !passcode;
     const pending = online ? unsynced().length : 0;
-    const dis = locked ? 'disabled' : '';
-    const onlineBar = !online ? '' : `<section class="card"><div class="row" style="margin:0">
-      ${cloudState === 'loading' ? '<span class="muted">Loading the shared online tally…</span>'
-        : cloudState === 'error' ? '<span class="warn">Couldn\'t reach the online tally: showing this browser\'s copy only.</span>'
-        : `<span><b>Shared online tally</b> <span class="muted">· everyone with this page sees it</span></span>`}
-      ${locked ? `<input id="tally-code" type="password" placeholder="Static passcode" autocomplete="off" style="width:12em"><button id="btn-unlock" class="primary">Unlock editing</button>
-        <span class="muted small">View only. ${pending ? `<span class="warn">${pending} new death${pending === 1 ? '' : 's'} from your analysis not saved online yet.</span>` : ''}</span>`
-        : `<span class="muted small">Editing unlocked in this browser.${pending ? ` Saving ${pending}…` : ''}</span><button id="btn-lock" class="ghost">Lock</button>`}
-    </div></section>`;
+    const onlineBar = !online ? '' : `<p class="banner"><b>Online death tally</b> · private to your FFLogs account${me?.name ? ` (${esc(me.name)})` : ''}: nobody else can see or change it.${pending ? ` Saving ${pending}…` : ''}</p>`;
     return `${onlineBar}${loaded.length ? `<section class="card">
       <h2>Raid callouts</h2>
       <p class="muted small">Paste the night's death notes, one per line, in the order they happened, e.g. <code>Arune - Forsaken - Stack not there</code>, <code>Calerie + Arune died to statue</code>, <code>Alistar died due to Ryujin no feint</code>.
       Each line is matched to that player's next logged death (same pull as the line before, or later), preferring one whose mechanic contains a word from the line.
       A matched death counts as a mechanical death against the player who died, or against the name after "due to" / "because of". Lines that don't start with a player name are party notes. Fix any match in the list below.</p>
       <textarea id="callouts" rows="6" placeholder="Arune - Forsaken - Stack not there">${esc(store.get('callouts', ''))}</textarea>
-      <div class="row"><button id="btn-callouts" class="primary" ${dis}>Match to deaths</button><span class="muted small">Re-matching replaces the earlier callouts for these reports.</span></div>
+      <div class="row"><button id="btn-callouts" class="primary">Match to deaths</button><span class="muted small">Re-matching replaces the earlier callouts for these reports.</span></div>
       ${callouts}
     </section>` : ''}
 
@@ -788,14 +797,14 @@ const TABS = {
           <label class="inline">Count <select id="tally-mode"><option value="mech" ${view.tallyMode === 'mech' ? 'selected' : ''}>Mechanical deaths (by who's responsible)</option><option value="all" ${view.tallyMode === 'all' ? 'selected' : ''}>All deaths before the wipe-out (by who died)</option></select></label>
           <label class="inline">By <select id="tally-kind"><option value="week" ${view.tallyKind === 'week' ? 'selected' : ''}>Raid week</option><option value="month" ${view.tallyKind === 'month' ? 'selected' : ''}>Month</option></select></label>
         </div></div>
-      <p class="muted small">${online ? 'Every report anyone has saved to the shared tally' : 'Every report analyzed in this browser'} (${all.length} deaths from ${reports.size} report${reports.size === 1 ? '' : 's'}${R.demo ? ', demo data: not saved' : ''}). Raid weeks start at the weekly reset, Tuesday 08:00 UTC. ${view.tallyMode === 'mech'
+      <p class="muted small">${online ? 'Every report saved to your online tally' : 'Every report analyzed in this browser'} (${all.length} deaths from ${reports.size} report${reports.size === 1 ? '' : 's'}${R.demo ? ', demo data: not saved' : ''}). Raid weeks start at the weekly reset, Tuesday 08:00 UTC. ${view.tallyMode === 'mech'
         ? 'Mechanical = a raid callout matched it, someone ticked it below, or the log analysis called it "Mechanic fail" / "Short stack/tower" (not a wipe-out death).' : 'Deaths after 4+ players were already down are left out unless a callout names them.'}</p>
       ${rows.length ? `<table><thead><tr><th>Player</th>${ps.map(p => `<th class="num">${esc(p.label)}</th>`).join('')}<th class="num">All time</th></tr></thead><tbody>
         ${rows.map(r => `<tr><td>${esc(r.player)} <span class="muted">${JOB_ABBR[r.job] || ''}</span></td>${r.per.map((v, i) => `<td class="num">${v ? (i === 0 ? `<b>${v}</b>` : v) : '<span class="muted">0</span>'}</td>`).join('')}<td class="num">${r.total}</td></tr>`).join('')}
       </tbody></table>` : '<p class="empty">Nothing counted yet.</p>'}
       <div class="row"><button id="btn-ledger-export" class="ghost">Export tally (JSON)</button>
-        ${locked ? '' : `<label class="ghost-file"><input type="file" id="ledger-import" accept=".json,application/json" hidden><span class="btn-like">Import tally</span></label>`}
-        <button id="btn-ledger-clear" class="ghost" ${dis}>Clear tally</button>
+        <label class="ghost-file"><input type="file" id="ledger-import" accept=".json,application/json" hidden><span class="btn-like">Import tally</span></label>
+        <button id="btn-ledger-clear" class="ghost">Clear tally</button>
         <span class="muted small">${online ? 'Export keeps a backup copy.' : 'Saved in this browser only: export it to move it or share it.'}</span></div>
     </section>
 
@@ -805,9 +814,9 @@ const TABS = {
       <table><thead><tr><th>Death (log)</th><th>Callout</th><th>Counts against</th><th>Mechanical</th></tr></thead><tbody>
       ${here.filter(e => forPlayer(e.player) || forPlayer(e.blame)).map(e => `<tr${e.wipeOut && !counts(e, 'all') ? ' class="muted"' : ''}>
         <td class="small">${deathTxt(e)}${e.wipeOut ? ' <span class="chip cat">wipe-out</span>' : ''}</td>
-        <td><input data-note="${esc(e.key)}" ${dis} value="${esc(e.note)}" style="width:100%" placeholder="—"></td>
-        <td><select data-blame="${esc(e.key)}" ${dis}><option value="">nobody</option>${names.map(n => `<option ${e.blame === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></td>
-        <td><input type="checkbox" data-mech="${esc(e.key)}" ${dis} ${e.mech ? 'checked' : ''}> <span class="muted small">${e.src === 'callout' ? 'callout' : e.src === 'edit' ? 'edited' : 'auto'}</span></td></tr>`).join('')}
+        <td><input data-note="${esc(e.key)}" value="${esc(e.note)}" style="width:100%" placeholder="—"></td>
+        <td><select data-blame="${esc(e.key)}"><option value="">nobody</option>${names.map(n => `<option ${e.blame === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></td>
+        <td><input type="checkbox" data-mech="${esc(e.key)}" ${e.mech ? 'checked' : ''}> <span class="muted small">${e.src === 'callout' ? 'callout' : e.src === 'edit' ? 'edited' : 'auto'}</span></td></tr>`).join('')}
       </tbody></table>
     </section>` : ''}`;
   },
@@ -1150,18 +1159,6 @@ function bindTally() {
   const on = (sel, ev, fn) => { const el = $(sel); if (el) el[ev] = fn; };
   on('#tally-mode', 'onchange', e => { view.tallyMode = e.target.value; render(); });
   on('#tally-kind', 'onchange', e => { view.tallyKind = e.target.value; render(); });
-  on('#btn-unlock', 'onclick', async () => {
-    const code = $('#tally-code').value;
-    if (!code) return;
-    try {
-      if (!await cloud.checkCode(code)) return status('Wrong passcode.', true);
-      passcode = code; store.set('tallyCode', code);
-      status('Editing unlocked.');
-      saveLedger(); render();
-    } catch (e) { status(e.message, true); }
-  });
-  on('#tally-code', 'onkeydown', e => { if (e.key === 'Enter') $('#btn-unlock').click(); });
-  on('#btn-lock', 'onclick', () => { passcode = ''; store.set('tallyCode', ''); render(); });
   on('#btn-callouts', 'onclick', () => {
     const text = $('#callouts').value;
     if (!demo) store.set('callouts', text);
@@ -1195,10 +1192,10 @@ function bindTally() {
   });
   on('#btn-ledger-clear', 'onclick', async () => {
     const n = Object.keys(getL()).length;
-    const where = online ? 'the shared online tally, for everyone' : 'the tally in this browser';
+    const where = online ? 'the online tally' : 'the tally in this browser';
     if (!n || !confirm(`Delete all ${n} deaths, callouts and edits from ${where}? This can't be undone (export it first to keep a copy).`)) return;
     if (online) {
-      try { await saving; await cloud.clearTally(passcode); synced = {}; }
+      try { await saving; await cloud.clearTally(ff.userToken()); synced = {}; }
       catch (e) { return status(e.message, true); }
       ledger = {}; calloutRows = null; render(); return;
     }
@@ -1245,7 +1242,7 @@ document.addEventListener('mousemove', e => {
   try { if (await ff.finishPkceLogin()) status('Logged in to FFLogs.'); }
   catch (e) { status(e.message, true); }
   renderConn();
-  if (cloud.cloudOn()) { render(); loadCloudTally(); }
+  if (cloud.cloudOn()) initCloud();
   const problems = checkCatalog();
   if (problems.length) console.warn('Mit catalog problems:', problems);
 })();
