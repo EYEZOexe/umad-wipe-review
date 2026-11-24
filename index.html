@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UMAD Wipe Review</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>UMAD Wipe Review</h1>
+    <p class="sub">Why did we wipe? FFLogs pulls checked against your mit sheet (Ikuya or LPDU) and against top clears, with the evidence for every finding.</p>
+  </div>
+  <div class="top-actions">
+    <span id="conn" class="conn"></span>
+    <button id="btn-login" class="primary hidden">Log in with FFLogs</button>
+    <button id="btn-settings" class="ghost">Settings</button>
+  </div>
+</header>
+
+<main>
+  <section class="card" id="input-card">
+    <label for="reports" class="lbl">FFLogs report links (one per line, e.g. one per prog night)</label>
+    <textarea id="reports" rows="2" placeholder="https://www.fflogs.com/reports/AbCdEf1234567890"></textarea>
+    <div class="row">
+      <button id="btn-run" class="primary">Analyze</button>
+      <button id="btn-demo" class="ghost">Try with demo data</button>
+      <label class="inline">Check against <select id="plan-select">
+        <option value="ikuya">Ikuya mit sheet</option>
+        <option value="lpdu">LPDU mit sheet</option>
+        <option value="custom">Custom sheet (Settings)</option>
+      </select></label>
+      <label class="inline">Only the last <input id="last-n" type="number" min="0" value="0" style="width:4.5em"> pulls <span class="muted">(0 = all)</span></label>
+      <span id="status" class="status" role="status"></span>
+    </div>
+  </section>
+
+  <details class="card hidden" id="roster-card">
+    <summary><b>Roster: who plays which sheet column</b> <span id="roster-summary" class="muted small"></span></summary>
+    <p class="muted small">MT/OT and D1–D4 are worked out by trying each swap and keeping the one where the most planned mits match what people actually pressed. Healers map to their job's column. Change anything that's wrong.</p>
+    <div id="roster" class="roster"></div>
+    <div class="row">
+      <button id="btn-rerun" class="primary">Re-check with this roster</button>
+      <button id="btn-detect" class="ghost">Re-detect from casts</button>
+    </div>
+  </details>
+
+  <div id="results"></div>
+</main>
+
+<dialog id="settings">
+  <form method="dialog" class="settings">
+    <h2>Settings</h2>
+    <h3>Connect to FFLogs</h3>
+    <p class="small">Create an API client at <a href="https://www.fflogs.com/api/clients/" target="_blank" rel="noopener">fflogs.com/api/clients</a>. Keys stay in this browser only (localStorage) and are only sent to fflogs.com.</p>
+    <fieldset>
+      <legend>Option A: client ID + secret (just for you)</legend>
+      <label>Client ID <input id="cc-id" autocomplete="off"></label>
+      <label>Client secret <input id="cc-secret" type="password" autocomplete="off"></label>
+      <button type="button" id="btn-cc" class="primary">Save &amp; connect</button>
+    </fieldset>
+    <fieldset>
+      <legend>Option B: log in with FFLogs (for sharing with the static)</legend>
+      <p class="small">Make the client a <b>public client</b> with redirect URL <code id="redir"></code>.</p>
+      <label>Public client ID <input id="pkce-id" autocomplete="off"></label>
+      <button type="button" id="btn-pkce" class="primary">Log in with FFLogs</button>
+    </fieldset>
+    <button type="button" id="btn-signout" class="ghost">Disconnect</button>
+    <h3>Mit sheet</h3>
+    <label>Google Sheet ID <input id="sheet-id"></label>
+    <label>Tab gids, P1→P5, comma-separated <input id="sheet-gids"></label>
+    <p class="small muted">The sheet must be viewable by anyone with the link.</p>
+    <h3>Downloaded data</h3>
+    <p class="small muted">Report events are cached in this browser so re-analyzing is instant.</p>
+    <button type="button" id="btn-clear-cache" class="ghost">Clear cached events</button>
+    <div class="row end"><button id="btn-close" class="primary" value="close">Done</button></div>
+  </form>
+</dialog>
+
+<dialog id="discord">
+  <form method="dialog" class="settings discord">
+    <h2>Discord export</h2>
+    <div class="row">
+      <label class="inline"><input type="radio" name="dx-mode" value="team" checked> Team recap <span class="muted small">(raid channel)</span></label>
+      <label class="inline"><input type="radio" name="dx-mode" value="players"> Player notes <span class="muted small">(one DM each)</span></label>
+      <label class="inline" id="dx-names-wrap"><input type="checkbox" id="dx-names"> Name players in the recap</label>
+    </div>
+    <p class="muted small">Discord cuts a message at 2,000 characters, so long texts come in parts: paste each part as its own message. The recap names nobody unless you tick the box (plan items use the sheet column); personal points go in the player notes.</p>
+    <div id="dx-out"></div>
+    <div class="row end"><button class="primary" value="close">Done</button></div>
+  </form>
+</dialog>
+
+<div id="tip" class="tip" role="tooltip"></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+# Local working data: FFLogs downloads and audit scratch files (player data, 15 MB) stay off the public site.
+audit/
+# Local Claude Code settings
+.claude/
