@@ -784,8 +784,8 @@ const TABS = {
       ${calloutRows.map((r, ri) => `<tr><td>${esc(r.text)}</td>
         <td class="small">${!r.victims.length ? '<span class="muted">Doesn\'t start with a name from these pulls: kept as a party note, not counted against anyone.</span>'
           : r.matched.map((m, vi) => `<select class="pick" data-pick="${ri}:${vi}">${m.death ? '' : `<option value="" selected>${m.guess ? `— pick (guess: ${esc(deathOpt(m.guess))}) —` : '— pick —'}</option>`}
-              ${here.filter(e => e.player === m.victim).map(e => `<option value="${esc(e.key)}" ${m.death?.key === e.key ? 'selected' : ''}>${esc(deathOpt(e))}</option>`).join('')}</select>
-            ${m.death ? (m.manual ? '<span class="muted">picked</span>' : `<span class="muted">pull #${r.pull}</span>`)
+              ${[...(m.death && m.death.player !== m.victim ? [m.death] : []), ...here.filter(e => e.player === m.victim)].map(e => `<option value="${esc(e.key)}" ${m.death?.key === e.key ? 'selected' : ''}>${esc(deathOpt(e))}</option>`).join('')}</select>
+            ${m.death ? (m.manual ? '<span class="muted">picked</span>' : m.onOther ? `<span class="muted">${esc(m.victim)} didn't die in pull #${r.pull}: counted against them on ${esc(m.death.player)}'s death</span>` : `<span class="muted">pull #${r.pull}</span>`)
               : r.pull != null ? `<span class="warn">${esc(m.victim)} didn't die in pull #${r.pull}.</span>`
               : '<span class="warn" data-tip="No pull number in the line, so the log can only guess (in a wipe or reset everyone dies). Add #N to the line, or pick the death.">not counted: add #pull or pick</span>'}`).join('<br>')}</td>
         <td>${r.matched.some(m => m.death) ? esc(r.blame || r.matched.filter(m => m.death).map(m => m.victim).join(', ')) : '<span class="muted">nobody yet</span>'}</td></tr>`).join('')}</tbody></table>` : '';
@@ -813,7 +813,7 @@ const TABS = {
           <label class="inline">By <select id="tally-kind"><option value="week" ${view.tallyKind === 'week' ? 'selected' : ''}>Raid week</option><option value="month" ${view.tallyKind === 'month' ? 'selected' : ''}>Month</option></select></label>
         </div></div>
       <p class="muted small">${online ? 'Every report saved to your online tally' : 'Every report analyzed in this browser'} (${all.length} deaths from ${reports.size} report${reports.size === 1 ? '' : 's'}${R.demo ? ', demo data: not saved' : ''}). Raid weeks start at the weekly reset, Tuesday 08:00 UTC. ${view.tallyMode === 'mech'
-        ? 'Mechanical = a raid callout matched it, someone ticked it below, or the log analysis called it "Mechanic fail" / "Short stack/tower" (not a wipe-out death).' : 'Deaths after 4+ players were already down are left out unless a callout names them.'}</p>
+        ? 'Mechanical = a raid callout counted it, or someone ticked it below. The log analysis alone never counts a death as mechanical: in a wipe or reset it cannot tell whose mistake it was.' : 'Deaths after 4+ players were already down are left out unless a callout names them.'}</p>
       ${rows.length ? `<table><thead><tr><th>Player</th>${ps.map(p => `<th class="num">${esc(p.label)}</th>`).join('')}<th class="num">All time</th></tr></thead><tbody>
         ${rows.map(r => `<tr><td>${esc(r.player)} <span class="muted">${JOB_ABBR[r.job] || ''}</span></td>${r.per.map((v, i) => `<td class="num">${v ? (i === 0 ? `<b>${v}</b>` : v) : '<span class="muted">0</span>'}</td>`).join('')}<td class="num">${r.total}</td></tr>`).join('')}
       </tbody></table>` : '<p class="empty">Nothing counted yet.</p>'}
@@ -831,7 +831,7 @@ const TABS = {
         <td class="small">${deathTxt(e)}${e.wipeOut ? ' <span class="chip cat">wipe-out</span>' : ''}</td>
         <td><input data-note="${esc(e.key)}" value="${esc(e.note)}" style="width:100%" placeholder="—"></td>
         <td><select data-blame="${esc(e.key)}"><option value="">nobody</option>${names.map(n => `<option ${e.blame === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></td>
-        <td><input type="checkbox" data-mech="${esc(e.key)}" ${e.mech ? 'checked' : ''}> <span class="muted small">${e.src === 'callout' ? 'callout' : e.src === 'edit' ? 'edited' : 'auto'}</span></td></tr>`).join('')}
+        <td><input type="checkbox" data-mech="${esc(e.key)}" ${counts(e, 'mech') ? 'checked' : ''}> <span class="muted small">${e.src === 'callout' ? 'callout' : e.src === 'edit' ? 'edited' : 'auto'}</span></td></tr>`).join('')}
       </tbody></table>
     </section>` : ''}`;
   },

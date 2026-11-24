@@ -2,9 +2,6 @@
 // tallied per player by raid week and by month. Each death can carry a raid callout ("Forsaken - stack not there"),
 // who it's blamed on, and whether it was a mechanical death (someone's own mistake) or not.
 
-/** Deaths the analysis calls a personal mechanic mistake are marked mechanical until someone says otherwise. */
-const AUTO_MECH = new Set(['Mechanic fail', 'Short stack/tower']);
-
 export const deathKey = (reportCode, fightId, name, t) => `${reportCode}:${fightId}:${name}:${Math.round(t)}`;
 
 /**
@@ -26,7 +23,9 @@ export function mergeDeaths(ledger, pulls) {
       // Only touch an existing entry when a log fact really changed, so re-analyzing doesn't re-send it.
       out[key] = prev
         ? (Object.keys(base).every(k => prev[k] === base[k]) ? prev : { ...prev, ...base })
-        : { ...base, note: '', blame: d.player.name, mech: !d.wipeOut && AUTO_MECH.has(d.category), src: 'auto' };
+        // Nothing is mechanical until a callout or a person says so: in a wipe or reset the log's "Mechanic fail"
+        // lands on whoever died first, not on whoever made the mistake.
+        : { ...base, note: '', blame: d.player.name, mech: false, src: 'auto' };
     }
   }
   return out;
@@ -63,7 +62,8 @@ const STOP = new Set(['died', 'dies', 'with', 'from', 'when', 'that', 'into', 't
  */
 export function parseCallout(line, isName) {
   const text = line.trim();
-  const words = text.split(/[\s,]+/).filter(Boolean);
+  // "Yuki/Mieki - P3": a slash right before a letter separates two names.
+  const words = text.split(/[\s,]+|\/(?=[A-Za-z])/).filter(Boolean);
   const victims = [];
   let i = 0;
   for (; i < words.length; i++) {
@@ -149,9 +149,13 @@ export function matchCallouts(text, deaths, names, nicknames = [], pullN = new M
       const mine = list.filter(d => d.player === v && !taken.has(d.key));
       if (n != null) {
         const inPull = mine.filter(d => nOf(d) === n);
-        const pick = inPull.find(d => score(d, terms) > 0) || inPull[0] || null;
+        let pick = inPull.find(d => score(d, terms) > 0) || inPull[0] || null;
+        // "#5 Yuki - too north with stack so Ryujin died": the named player may have lived. The callout still says
+        // who's responsible, so it goes on the pull's first unclaimed death and counts against them.
+        const onOther = !pick;
+        if (onOther) pick = list.filter(d => nOf(d) === n && !taken.has(d.key)).sort((a, b) => a.pullT - b.pullT)[0] || null;
         if (pick) taken.add(pick.key);
-        matched.push({ victim: v, death: pick, pinned: true });
+        matched.push({ victim: v, death: pick, pinned: true, onOther: onOther && !!pick });
         continue;
       }
       const ahead = mine.filter(d => order(d) >= at);
@@ -173,7 +177,7 @@ export function matchCallouts(text, deaths, names, nicknames = [], pullN = new M
 }
 
 /** A death with its callout taken off: back to what the log analysis says. */
-export const clearCallout = e => ({ ...e, note: '', blame: e.player, mech: !e.wipeOut && AUTO_MECH.has(e.category), src: 'auto' });
+export const clearCallout = e => ({ ...e, note: '', blame: e.player, mech: false, src: 'auto' });
 
 /** Write matched callouts into the ledger: note, blame and "mechanical". Earlier callouts on these reports are cleared first. */
 export function applyCallouts(ledger, rows, reports) {
@@ -221,7 +225,8 @@ export function periods(kind, now, n) {
 }
 
 /** Does this ledger entry count for this view? Mechanical: blamed on someone. All: every death before the wipe-out. */
-export const counts = (e, mode) => mode === 'mech' ? e.mech && !!e.blame : (!e.wipeOut || e.src === 'callout');
+// Mechanical: only deaths a callout or a person marked. Entries saved before this rule can still carry mech on 'auto'.
+export const counts = (e, mode) => mode === 'mech' ? e.mech && !!e.blame && e.src !== 'auto' : (!e.wipeOut || e.src === 'callout');
 export const ownerOf = (e, mode) => mode === 'mech' ? e.blame : e.player;
 
 /** Per player: count in each period and all time. Rows sorted by the newest period, then all time. */

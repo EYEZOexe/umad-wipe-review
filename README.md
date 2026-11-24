@@ -71,7 +71,7 @@ report updates its log facts and keeps your callouts and edits. Demo data is nev
   first unclaimed death in the same pull as the line before or later, preferring one (of their next 3) whose logged
   mechanic contains a word from the line. Matches by order alone are flagged "order only". Re-matching replaces earlier
   callouts for the loaded reports.
-- **Mechanical** deaths: matched by a callout, ticked by hand, or called "Mechanic fail" / "Short stack/tower" by the
+- **Mechanical** deaths: counted by a callout or ticked by hand. The log analysis alone never marks one (in a wipe or reset its "Mechanic fail" lands on whoever died first). If a callout names a player who lived through that pull, it goes on the pull's first death and counts against them. The
   analysis (wipe-out deaths excluded). The tally counts them against the player responsible. Switch to "All deaths" to
   count every death before the wipe-out against who died.
 - **Deaths in these pulls**: edit each death's callout, who it counts against (or nobody), and the mechanical tick.
