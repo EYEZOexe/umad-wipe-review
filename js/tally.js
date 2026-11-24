@@ -116,44 +116,57 @@ const towerNumber = text => { const m = text.toLowerCase().match(/\b(\d{1,2})(?:
 /** "Deaths:" and similar heading lines aren't callouts. */
 const isHeading = line => /:\s*$/.test(line) && line.split(/\s+/).length <= 3;
 
+/** "#7 Arune - Forsaken" or "Pull 7: Arune …": the pull number as shown on the page, and the line without it. */
+export function pullNumberOf(line) {
+  const m = line.match(/(?:^|\s)(?:#|pull\s*#?)(\d{1,3})(?!\d)\s*[:.)\-]?/i);
+  return m ? { n: +m[1], rest: (line.slice(0, m.index) + ' ' + line.slice(m.index + m[0].length)).replace(/\s+/g, ' ').trim() } : { n: null, rest: line };
+}
+
 /**
- * Match callout lines, in the order they were written (the order of the night), to logged deaths.
- * Each callout takes that player's first unclaimed death in the same pull as the previous callout or later whose
- * mechanic fits the callout (its words, or what its nicknames stand for). With no fitting death it takes their
- * first unclaimed death from that point ("order only"). If nothing is left after that point, the earliest
- * unclaimed death of that player anywhere is used. Returns one row per line.
+ * Match callout lines to logged deaths. pullN maps "report:fight" to the pull number shown on the page.
+ * - A line with a pull number ("#7 Arune - Forsaken") takes that player's death in that pull (if they died more than
+ *   once there, the one whose mechanic fits the line, else the first). This is the only kind that counts on its own.
+ * - A line without one only gets a guess (from the order of the lines and the mechanic words): shown, never counted,
+ *   until someone picks the death. In a wipe or reset everyone dies, so the log can't tell whose mistake it was.
  */
-export function matchCallouts(text, deaths, names, nicknames = []) {
+export function matchCallouts(text, deaths, names, nicknames = [], pullN = new Map()) {
   const isName = nameMatcher(names);
   const list = [...deaths].sort((a, b) => a.abs - b.abs);
   const pullOrder = [...new Set(list.map(d => `${d.report}:${d.fight}`))];
   const order = d => pullOrder.indexOf(`${d.report}:${d.fight}`);
+  const nOf = d => pullN.get(`${d.report}:${d.fight}`);
   const taken = new Set();
   let at = 0;
   const rows = [];
   for (const line of text.split(/\r?\n/).map(s => s.trim()).filter(Boolean)) {
     if (isHeading(line)) continue;
-    const c = parseCallout(line, isName);
+    const { n, rest } = pullNumberOf(line);
+    const c = { ...parseCallout(rest, isName), text: line, pull: n };
     const terms = termsFor(c, nicknames);
     const tower = towerNumber(c.text);
     const matched = [];
     for (const v of c.victims) {
       const mine = list.filter(d => d.player === v && !taken.has(d.key));
+      if (n != null) {
+        const inPull = mine.filter(d => nOf(d) === n);
+        const pick = inPull.find(d => score(d, terms) > 0) || inPull[0] || null;
+        if (pick) taken.add(pick.key);
+        matched.push({ victim: v, death: pick, pinned: true });
+        continue;
+      }
       const ahead = mine.filter(d => order(d) >= at);
       const pool = ahead.length ? ahead : mine;
       // "Calerie + Arune died to statue": the second name goes to the same pull as the first when they died there.
-      const first = matched.find(x => x.death)?.death;
+      const first = matched.find(x => x.guess)?.guess;
       const samePull = first ? pool.filter(d => d.report === first.report && d.fight === first.fight) : [];
-      const fit = (tower && pool.find(d => tower.test(hayOf(d))))
+      const guess = (tower && pool.find(d => tower.test(hayOf(d))))
         || (first && (samePull.find(d => score(d, terms) > 0) || samePull[0]))
-        || (terms.length ? pool.find(d => score(d, terms) > 0) : null);
-      const pick = fit || pool[0];
-      if (!pick) { matched.push({ victim: v, death: null }); continue; }
-      taken.add(pick.key);
-      matched.push({ victim: v, death: pick, fit: !!fit });
+        || (terms.length ? pool.find(d => score(d, terms) > 0) : null)
+        || pool[0] || null;
+      matched.push({ victim: v, death: null, guess });
     }
-    const found = matched.filter(m => m.death);
-    if (found.length) at = Math.max(at, ...found.map(m => order(m.death)));
+    const placed = matched.map(m => m.death || m.guess).filter(Boolean);
+    if (placed.length) at = Math.max(at, ...placed.map(order));
     rows.push({ ...c, terms, matched });
   }
   return rows;

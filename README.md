@@ -53,15 +53,19 @@ Click a phase there to switch the filter.
 Every analyzed report's deaths go into a ledger saved in this browser (localStorage), so nights add up. Re-analyzing a
 report updates its log facts and keeps your callouts and edits. Demo data is never saved.
 
-- **Raid callouts**: paste the night's death notes, one per line, in the order they happened:
-  - `Arune - Forsaken - Stack not there` → Arune's next death.
-  - `Calerie + Arune died to statue` → one death each.
-  - `Alistar died due to Ryujin no feint` → Alistar's death, counted against Ryujin ("due to", "because of", "caused by").
-  - `Arrows too far apart` (no player name first) → a party note, counted against nobody.
+- **Raid callouts**: paste the night's death notes, one per line, each starting with the pull number shown on the Pulls tab:
+  - `#7 Arune - Forsaken - Stack not there` (or `Pull 7: …`) → Arune's death in pull #7.
+  - `#21 Calerie + Arune died to statue` → each one's death in pull #21.
+  - `#21 Alistar died due to Ryujin no feint` → Alistar's death, counted against Ryujin ("due to", "because of", "caused by").
+  - `#24 Arrows too far apart` (no player name first) → a party note, counted against nobody.
 
-  **Your names for mechanics** (under the callouts box) teach the matcher your static's words: `statue, gaze = flagrant fire iii, mystery magic`
-  means a callout saying "statue" fits a death whose logged ability, sheet mechanic or phase contains those words. "8th tower" always means the
-  sheet's Towers VIII. Lines like "Deaths:" are skipped. Each matched name has a drop-down of that player's deaths to pick the right one.
+  Only lines with a pull number count by themselves. In a wipe or reset everyone dies, so the log can't say whose mistake
+  it was: a line without a pull number gets a guess (from line order and mechanic words) that counts against nobody until
+  you pick the death in its drop-down. If the player didn't die in the given pull, the line says so.
+
+  **Your names for mechanics** (under the callouts box) help the guesses and pick between two deaths of one player in the
+  same pull: `statue, gaze = flagrant fire iii, mystery magic` means "statue" fits a death whose logged ability, sheet
+  mechanic or phase contains those words. "8th tower" means the sheet's Towers VIII. Lines like "Deaths:" are skipped.
 
   Names match on first or last name, a 4+ letter prefix ("Reimui" → Reimu) or one typo. Each line takes that player's
   first unclaimed death in the same pull as the line before or later, preferring one (of their next 3) whose logged

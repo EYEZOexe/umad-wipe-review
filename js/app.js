@@ -783,19 +783,22 @@ const TABS = {
     const callouts = calloutRows ? `<table><thead><tr><th>Callout</th><th>Matched to (log)</th><th>Counted against</th></tr></thead><tbody>
       ${calloutRows.map((r, ri) => `<tr><td>${esc(r.text)}</td>
         <td class="small">${!r.victims.length ? '<span class="muted">Doesn\'t start with a name from these pulls: kept as a party note, not counted against anyone.</span>'
-          : r.matched.map((m, vi) => `<select class="pick" data-pick="${ri}:${vi}">${m.death ? '' : '<option value="" selected>— none —</option>'}
+          : r.matched.map((m, vi) => `<select class="pick" data-pick="${ri}:${vi}">${m.death ? '' : `<option value="" selected>${m.guess ? `— pick (guess: ${esc(deathOpt(m.guess))}) —` : '— pick —'}</option>`}
               ${here.filter(e => e.player === m.victim).map(e => `<option value="${esc(e.key)}" ${m.death?.key === e.key ? 'selected' : ''}>${esc(deathOpt(e))}</option>`).join('')}</select>
-            ${m.manual ? '<span class="muted">picked</span>' : m.death && !m.fit ? ' <span class="warn" data-tip="Nothing in the callout (or its nicknames) matches a logged mechanic: matched by order only. Pick the right death.">order only</span>' : ''}`).join('<br>')}</td>
-        <td>${r.victims.length ? esc(r.blame || r.victims.join(', ')) : '<span class="muted">—</span>'}</td></tr>`).join('')}</tbody></table>` : '';
+            ${m.death ? (m.manual ? '<span class="muted">picked</span>' : `<span class="muted">pull #${r.pull}</span>`)
+              : r.pull != null ? `<span class="warn">${esc(m.victim)} didn't die in pull #${r.pull}.</span>`
+              : '<span class="warn" data-tip="No pull number in the line, so the log can only guess (in a wipe or reset everyone dies). Add #N to the line, or pick the death.">not counted: add #pull or pick</span>'}`).join('<br>')}</td>
+        <td>${r.matched.some(m => m.death) ? esc(r.blame || r.matched.filter(m => m.death).map(m => m.victim).join(', ')) : '<span class="muted">nobody yet</span>'}</td></tr>`).join('')}</tbody></table>` : '';
     const online = cloud.cloudOn() && !R.demo;
     const pending = online ? unsynced().length : 0;
     const onlineBar = !online ? '' : `<p class="banner"><b>Online death tally</b> · private to your FFLogs account${me?.name ? ` (${esc(me.name)})` : ''}: nobody else can see or change it.${pending ? ` Saving ${pending}…` : ''}</p>`;
     return `${onlineBar}${loaded.length ? `<section class="card">
       <h2>Raid callouts</h2>
       <p class="muted small">Paste the night's death notes, one per line, in the order they happened, e.g. <code>Arune - Forsaken - Stack not there</code>, <code>Calerie + Arune died to statue</code>, <code>Alistar died due to Ryujin no feint</code>.
-      Each line is matched to that player's next logged death (same pull as the line before, or later), preferring one whose mechanic contains a word from the line.
-      A matched death counts as a mechanical death against the player who died, or against the name after "due to" / "because of". Lines that don't start with a player name are party notes. Fix any match in the list below.</p>
-      <textarea id="callouts" rows="6" placeholder="Arune - Forsaken - Stack not there">${esc(store.get('callouts', ''))}</textarea>
+      <b>Start each line with the pull number</b> as shown on the Pulls tab, e.g. <code>#7 Arune - Forsaken - stack not there</code> (also <code>Pull 7:</code>): it then counts against that player's death in that pull.
+      A line without a pull number only gets a guess and counts against nobody until you pick the death: in a wipe or reset everyone dies, so the log alone can't tell whose mistake it was.
+      A counted death is a mechanical death against the player who died, or against the name after "due to" / "because of". Lines that don't start with a player name are party notes.</p>
+      <textarea id="callouts" rows="6" placeholder="#7 Arune - Forsaken - Stack not there">${esc(store.get('callouts', ''))}</textarea>
       <details class="sub"><summary class="small"><b>Your names for mechanics</b> <span class="muted">(nickname = words in the logged ability, sheet mechanic or phase)</span></summary>
         <p class="muted small">One per line. Left of "=": words your callouts use, comma-separated. Right: words that appear in the log for that mechanic. "8th tower" always means the sheet's Towers VIII.</p>
         <textarea id="nicknames" rows="6">${esc(store.get('nicknames', DEFAULT_NICKNAMES))}</textarea></details>
@@ -1177,7 +1180,8 @@ function bindTally() {
     const codes = loaded.map(e => e.report.code);
     const here = Object.values(getL()).filter(e => codes.includes(e.report));
     store.set('nicknames', $('#nicknames').value);
-    calloutRows = matchCallouts(text, here, fullResult.players.map(p => p.name), parseNicknames($('#nicknames').value));
+    const pullN = new Map(fullResult.pulls.map(p => [`${p.reportCode}:${p.id}`, p.n]));
+    calloutRows = matchCallouts(text, here, fullResult.players.map(p => p.name), parseNicknames($('#nicknames').value), pullN);
     setL(applyCallouts(getL(), calloutRows, codes));
     render();
   });
